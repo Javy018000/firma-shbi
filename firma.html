@@ -62,7 +62,7 @@
         cnv.getContext('2d').clearRect(0, 0, w, h);
         var sign = Topaz.SignatureCaptureWindow.Sign;
         sign.SetImageDetails(1, w, h, false, false, 0.0); // 1 = PNG
-        sign.SetPenDetails('Black', 5);
+        sign.SetPenDetails('Black', 3);
         sign.SetMinSigPoints(25);
         setEstado('Firme en el pad y acepte (✓) en la ventana de Topaz…', '');
         await sign.StartSign(false, 1, 0, '');
