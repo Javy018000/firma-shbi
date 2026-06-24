@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Firma del huésped — SHBI</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 16px; background: #f4f6f8; color: #222; }
+    h2 { margin: 0 0 8px; font-size: 18px; }
+    #estado { font-size: 13px; color: #555; margin: 8px 0; min-height: 18px; }
+    canvas { border: 1px solid #ccc; border-radius: 8px; background: #fff; width: 100%; max-width: 500px; height: 120px; display: block; }
+    #preview { display: none; max-width: 500px; width: 100%; height: 120px; object-fit: contain; border: 1px solid #2e7d32; border-radius: 8px; margin-top: 8px; background: #fff; }
+    .btns { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    button { flex: 1; min-width: 120px; padding: 12px; border: 0; border-radius: 8px; font-size: 15px; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: default; }
+    .primary { background: #1565c0; color: #fff; }
+    .ok { background: #2e7d32; color: #fff; }
+    .sec { background: #e0e0e0; color: #222; }
+  </style>
+</head>
+<body>
+  <h2>✍️ Firma del huésped</h2>
+  <div id="estado">Cargando extensión de firma…</div>
+  <canvas id="cnv" width="500" height="120"></canvas>
+  <img id="preview" alt="firma capturada">
+  <div class="btns">
+    <button id="btnFirmar" class="primary" onclick="firmar()" disabled>✍️ Firmar</button>
+    <button id="btnUsar" class="ok" onclick="usar()" disabled>✅ Usar esta firma</button>
+    <button class="sec" onclick="window.close()">✖ Cancelar</button>
+  </div>
+
+  <script>
+    // Página de firma TOP-LEVEL (GitHub Pages): aquí la extensión SigPlusExtLite
+    // SÍ se inyecta. Captura la firma con la ventana de Topaz y la devuelve al
+    // CheckIn (que vive en el iframe de Apps Script) mediante postMessage.
+    var firmaB64 = '';
+
+    function setEstado(t, c) {
+      var e = document.getElementById('estado');
+      if (e) { e.textContent = t; e.style.color = (c === 'red') ? '#c62828' : (c === 'green' ? '#2e7d32' : '#555'); }
+    }
+
+    // Carga el wrapper que inyecta la extensión (reintenta por si tarda).
+    function cargarWrapper(n) {
+      var url = document.documentElement.getAttribute('SigPlusExtLiteWrapperURL');
+      if (url) {
+        var s = document.createElement('script');
+        s.onload = function () { setEstado('Listo. Pulse "Firmar".', 'green'); document.getElementById('btnFirmar').disabled = false; };
+        s.onerror = function () { setEstado('No se pudo cargar el wrapper de la extensión.', 'red'); };
+        s.src = url;
+        document.head.appendChild(s);
+        return;
+      }
+      if (n < 30) { setTimeout(function () { cargarWrapper(n + 1); }, 200); return; }
+      setEstado('No se detectó la extensión SigPlusExtLite en este navegador. Instálela/habilítela.', 'red');
+    }
+
+    async function firmar() {
+      try {
+        var cnv = document.getElementById('cnv');
+        var w = cnv.width, h = cnv.height;
+        cnv.getContext('2d').clearRect(0, 0, w, h);
+        var sign = Topaz.SignatureCaptureWindow.Sign;
+        sign.SetImageDetails(1, w, h, false, false, 0.0); // 1 = PNG
+        sign.SetPenDetails('Black', 1);
+        sign.SetMinSigPoints(25);
+        setEstado('Firme en el pad y acepte (✓) en la ventana de Topaz…', '');
+        await sign.StartSign(false, 1, 0, '');
+        var err = await Topaz.Global.GetLastError();
+        if (err) { setEstado('Topaz: ' + err, 'red'); return; }
+        if (await sign.IsSigned()) {
+          firmaB64 = await sign.GetSignatureImage();
+          var ctx = cnv.getContext('2d');
+          var img = new Image();
+          img.onload = function () { ctx.drawImage(img, 0, 0, w, h); };
+          img.src = 'data:image/png;base64,' + firmaB64;
+          var p = document.getElementById('preview');
+          p.src = 'data:image/png;base64,' + firmaB64;
+          p.style.display = 'block';
+          document.getElementById('btnUsar').disabled = false;
+          setEstado('Firma capturada. Pulse "Usar esta firma".', 'green');
+        } else {
+          setEstado('No se registró firma.', 'red');
+        }
+      } catch (e) { setEstado('Error al firmar: ' + e, 'red'); }
+    }
+
+    function usar() {
+      if (!firmaB64) { setEstado('Primero capture una firma.', 'red'); return; }
+      if (window.opener) { window.opener.postMessage({ source: 'topaz-firma', image: firmaB64 }, '*'); }
+      setEstado('Firma enviada. Cerrando…', 'green');
+      setTimeout(function () { window.close(); }, 400);
+    }
+
+    cargarWrapper(0);
+  </script>
+</body>
+</html>
