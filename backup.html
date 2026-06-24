@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Backup CheckIn — SHBI</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 16px; background: #f4f6f8; color: #222; }
+    h2 { margin: 0 0 8px; font-size: 18px; }
+    #estado { font-size: 13px; color: #555; margin: 8px 0; min-height: 18px; }
+    #info { font-size: 13px; color: #333; margin: 8px 0; }
+    .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+    button { flex: 1; min-width: 130px; padding: 12px; border: 0; border-radius: 8px; font-size: 15px; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: default; }
+    .ok { background: #2e7d32; color: #fff; }
+    .sec { background: #e0e0e0; color: #222; }
+  </style>
+</head>
+<body>
+  <h2>💾 Guardar en backup</h2>
+  <div id="estado">Esperando datos del check-in…</div>
+  <div id="info"></div>
+  <div class="btns">
+    <button id="btnCarpeta" class="sec" onclick="elegirCarpeta()">📁 Elegir/cambiar carpeta</button>
+    <button id="btnGuardar" class="ok" onclick="guardar()" disabled>💾 Guardar</button>
+    <button class="sec" onclick="window.close()">✖ Cerrar</button>
+  </div>
+
+  <script>
+    // Página TOP-LEVEL (GitHub Pages): aquí SÍ funciona la File System Access API.
+    // Recibe los PDF del CheckIn por postMessage y los escribe en <carpeta>/<CURSO>/.
+    var datos = null;        // { carpeta, archivos:[{nombre, base64}] }
+    var dirHandle = null;    // carpeta de backup elegida (persistida en IndexedDB)
+
+    function setEstado(t, c) {
+      var e = document.getElementById('estado');
+      if (e) { e.textContent = t; e.style.color = (c === 'red') ? '#c62828' : (c === 'green' ? '#2e7d32' : '#555'); }
+    }
+
+    // IndexedDB para recordar la carpeta entre sesiones
+    function _idb(modo, fn) {
+      return new Promise(function (res, rej) {
+        var r = indexedDB.open('checkinBackup', 1);
+        r.onupgradeneeded = function () { r.result.createObjectStore('kv'); };
+        r.onsuccess = function () {
+          var tx = r.result.transaction('kv', modo);
+          var rq = fn(tx.objectStore('kv'));
+          tx.oncomplete = function () { res(rq && rq.result); };
+          tx.onerror = function () { rej(tx.error); };
+        };
+        r.onerror = function () { rej(r.error); };
+      });
+    }
+    function guardarHandle(h) { return _idb('readwrite', function (st) { return st.put(h, 'dir'); }); }
+    function leerHandle() { return _idb('readonly', function (st) { return st.get('dir'); }); }
+
+    function _base64ABlob(b64) {
+      var bin = atob(b64);
+      var u = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+      return new Blob([u], { type: 'application/pdf' });
+    }
+
+    function actualizarBtn() {
+      document.getElementById('btnGuardar').disabled = !(datos && datos.archivos && datos.archivos.length);
+    }
+
+    async function elegirCarpeta() {
+      if (!window.showDirectoryPicker) { setEstado('Este navegador no soporta elegir carpeta (usa Chrome/Edge).', 'red'); return; }
+      try {
+        var h = await window.showDirectoryPicker({ mode: 'readwrite' });
+        dirHandle = h;
+        await guardarHandle(h);
+        setEstado('Carpeta lista. Pulse "Guardar".', 'green');
+      } catch (e) { if (e.name !== 'AbortError') setEstado('No se pudo elegir carpeta: ' + e.message, 'red'); }
+    }
+
+    async function permisoOK(h) {
+      var o = { mode: 'readwrite' };
+      if ((await h.queryPermission(o)) === 'granted') return true;
+      return (await h.requestPermission(o)) === 'granted';
+    }
+
+    async function guardar() {
+      if (!datos || !datos.archivos || !datos.archivos.length) { setEstado('Aún no llegan los archivos del check-in.', 'red'); return; }
+      try {
+        if (!dirHandle) { await elegirCarpeta(); if (!dirHandle) return; }
+        if (!(await permisoOK(dirHandle))) { setEstado('Permiso de carpeta denegado.', 'red'); return; }
+        var carpeta = datos.carpeta || 'OTROS';
+        var dir = await dirHandle.getDirectoryHandle(carpeta, { create: true });
+        var n = 0;
+        for (var i = 0; i < datos.archivos.length; i++) {
+          var a = datos.archivos[i];
+          if (!a || !a.base64) continue;
+          var fh = await dir.getFileHandle(a.nombre, { create: true });
+          var w = await fh.createWritable();
+          await w.write(_base64ABlob(a.base64));
+          await w.close();
+          n++;
+        }
+        setEstado('✅ ' + n + ' PDF guardados en ' + carpeta, 'green');
+        if (window.opener) window.opener.postMessage({ source: 'backup-done', ok: true, msg: n + ' PDF guardados en ' + carpeta }, '*');
+        setTimeout(function () { window.close(); }, 1200);
+      } catch (e) {
+        setEstado('Error guardando: ' + e.message, 'red');
+        if (window.opener) window.opener.postMessage({ source: 'backup-done', ok: false, msg: e.message }, '*');
+      }
+    }
+
+    window.addEventListener('message', function (ev) {
+      if (!ev || !ev.data || ev.data.source !== 'backup-data') return;
+      datos = { carpeta: ev.data.carpeta, archivos: ev.data.archivos || [] };
+      document.getElementById('info').textContent = datos.archivos.length + ' PDF · carpeta: ' + (datos.carpeta || 'OTROS');
+      setEstado(dirHandle ? 'Listo. Pulse "Guardar".' : 'Elija la carpeta de backup y pulse "Guardar".', '');
+      actualizarBtn();
+    });
+
+    (async function init() {
+      try { dirHandle = (await leerHandle()) || null; } catch (e) {}
+      setEstado('Esperando datos del check-in…', '');
+      if (window.opener) window.opener.postMessage({ source: 'backup-ready' }, '*');
+    })();
+  </script>
+</body>
+</html>
