@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Registro de alimentación — SHBI</title>
+  <!--
+    Página PÚBLICA del registro de alimentación (la del QR).
+
+    ¿Por qué vive aquí (GitHub Pages) y no dentro de Apps Script?
+    Apps Script NO soporta multi-login: si el huésped tiene varias cuentas de
+    Google abiertas, al abrir el /exec Google lo redirige a /macros/u/N/s/... y
+    a muchos les responde "No se puede abrir el archivo en estos momentos".
+    Desde aquí el navegador solo hace fetch() a la API, y ese fetch cross-origin
+    NO manda cookies: Google no resuelve ninguna cuenta y siempre funciona.
+
+    ⚠️ Al cambiar de implementación, actualizar API_URL con la URL /exec nueva.
+  -->
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; color: #24303f;
+           background: linear-gradient(160deg, #667eea 0%, #764ba2 100%);
+           min-height: 100vh; padding: 16px; }
+    .wrap { max-width: 520px; margin: 0 auto; }
+    .card { background: #fff; border-radius: 18px; padding: 22px; box-shadow: 0 10px 34px rgba(0,0,0,.16); margin-bottom: 14px; }
+    h1 { font-size: 20px; text-align: center; margin-bottom: 4px; }
+    .sub { text-align: center; color: #6b7280; font-size: 13px; margin-bottom: 16px; }
+    .intro { font-size: 13.5px; line-height: 1.6; color: #4b5563; background: #f6f7fb; border-radius: 12px; padding: 14px; margin-bottom: 16px; }
+    label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #374151; }
+    input[type=text] { width: 100%; padding: 13px 14px; border: 2px solid #e2e6ee; border-radius: 12px; font-size: 16px; font-family: inherit; }
+    input[type=text]:focus { outline: none; border-color: #667eea; }
+    .campo { margin-bottom: 14px; }
+    .btn { width: 100%; padding: 14px; border: none; border-radius: 12px; font-size: 16px; font-weight: 700;
+           font-family: inherit; cursor: pointer; background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; }
+    .btn:disabled { opacity: .55; cursor: not-allowed; }
+    .btn-sec { background: #eef0f6; color: #445; margin-top: 10px; }
+    .aviso { border-radius: 12px; padding: 14px; font-size: 14px; line-height: 1.55; margin-bottom: 14px; }
+    .aviso-ok   { background: #e7f6ec; color: #14532d; border: 1px solid #b7e4c7; }
+    .aviso-info { background: #e8f1fd; color: #0c4a6e; border: 1px solid #b6d8f7; }
+    .aviso-warn { background: #fff6e0; color: #7a5b00; border: 1px solid #ffe0a3; }
+    .aviso-err  { background: #fdeaec; color: #7d1a24; border: 1px solid #f5c2c7; }
+    .comida { display: flex; align-items: center; gap: 12px; padding: 14px; border: 2px solid #e2e6ee;
+              border-radius: 14px; margin-bottom: 10px; cursor: pointer; transition: border-color .15s, background .15s; }
+    .comida.sel { border-color: #667eea; background: #f3f4ff; }
+    .comida input { width: 22px; height: 22px; accent-color: #667eea; flex-shrink: 0; }
+    .comida .nom { font-weight: 700; font-size: 15px; }
+    .resumen { background: #f6f7fb; border-radius: 14px; padding: 16px; margin: 14px 0; text-align: center; }
+    .resumen .plan { font-size: 16px; font-weight: 700; }
+    .resumen .precio { font-size: 26px; font-weight: 800; color: #4a5fc1; margin: 4px 0; }
+    .resumen .nota { font-size: 12px; color: #6b7280; }
+    .resumen.malo .plan { color: #7d1a24; font-size: 14px; font-weight: 600; }
+    .datos { font-size: 13px; color: #4b5563; background: #f6f7fb; border-radius: 12px; padding: 12px; margin-bottom: 14px; }
+    .datos b { color: #24303f; }
+    .tabla-planes { width: 100%; font-size: 13px; border-collapse: collapse; margin-top: 8px; }
+    .tabla-planes td { padding: 5px 0; }
+    .tabla-planes td:last-child { text-align: right; font-weight: 700; }
+    .cargando { text-align: center; padding: 26px; color: #6b7280; display: none; }
+    .oculto { display: none; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="card" id="paso1">
+    <h1>&#127869;&#65039; Registro de alimentación</h1>
+    <div class="sub">Sede Hotel Bicentenario</div>
+
+    <div class="intro">
+      Este registro tiene como objetivo registrar en el sistema su elección de alimentación
+      durante su estadía en la sede. Aquí podrá seleccionar el plan que más se ajuste a su
+      preferencia. El sistema deja de recibir solicitudes después de las
+      <strong>18:00 horas</strong>. El plan escogido se aplicará <strong>al día siguiente</strong>;
+      es decir, si necesita alimentación el mismo día, pasará como extra.
+    </div>
+
+    <div class="campo">
+      <label for="cedula">Número de cédula</label>
+      <input type="text" id="cedula" inputmode="numeric" autocomplete="off" placeholder="Ej: 1012345678">
+    </div>
+    <div class="campo">
+      <label for="hab">Número de habitación</label>
+      <input type="text" id="hab" autocomplete="off" placeholder="Ej: 101B">
+    </div>
+    <button class="btn" id="btnConsultar" onclick="consultar()">Continuar</button>
+    <div id="errConsulta" class="aviso aviso-err oculto" style="margin-top:14px;"></div>
+  </div>
+
+  <div class="cargando" id="cargando"><div class="card">Consultando sus datos...</div></div>
+
+  <div class="card oculto" id="paso2">
+    <div class="datos" id="datosHuesped"></div>
+    <div id="contenido"></div>
+    <button class="btn btn-sec" onclick="volver()">Consultar otra habitación</button>
+  </div>
+
+</div>
+
+<script>
+  // ⚠️ URL /exec de la implementación ACTIVA del web app.
+  var API_URL = 'https://script.google.com/macros/s/AKfycby6BRXgvKgbglg_OqXmDYtNGjn635_vqElX6A_k6i-buS5yD0jt9f-m2w9LfrpXirQS/exec';
+
+  var estado = null;
+
+  function $(id){ return document.getElementById(id); }
+  function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+  function pesos(n){ return '$' + Number(n||0).toLocaleString('es-CO'); }
+
+  // fetch sin cookies: Google no resuelve cuenta => sin error de multi-login
+  function api(params){
+    var qs = Object.keys(params).map(function(k){
+      return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]);
+    }).join('&');
+    return fetch(API_URL + '?' + qs, { method: 'GET', credentials: 'omit' })
+      .then(function(r){ return r.json(); });
+  }
+
+  $('cedula').addEventListener('keypress', function(e){ if(e.key==='Enter') $('hab').focus(); });
+  $('hab').addEventListener('keypress', function(e){ if(e.key==='Enter') consultar(); });
+
+  function mostrarError(msg){ var el = $('errConsulta'); el.textContent = msg; el.classList.remove('oculto'); }
+
+  function consultar(){
+    var ced = $('cedula').value.trim();
+    var hab = $('hab').value.trim().toUpperCase();
+    $('errConsulta').classList.add('oculto');
+    if(!ced || !hab){ mostrarError('Ingrese su cédula y el número de habitación.'); return; }
+
+    $('paso1').classList.add('oculto');
+    $('cargando').style.display = 'block';
+
+    api({ api: 'consultar', cedula: ced, hab: hab })
+      .then(function(r){
+        $('cargando').style.display = 'none';
+        if(!r || !r.success){ $('paso1').classList.remove('oculto'); mostrarError((r&&r.error) || 'No se pudo consultar.'); return; }
+        estado = r; render();
+      })
+      .catch(function(e){
+        $('cargando').style.display = 'none';
+        $('paso1').classList.remove('oculto');
+        mostrarError('No hay conexión con el servidor. Intente de nuevo. (' + e.message + ')');
+      });
+  }
+
+  function volver(){
+    $('paso2').classList.add('oculto');
+    $('paso1').classList.remove('oculto');
+    $('cedula').value = ''; $('hab').value = '';
+    estado = null; $('cedula').focus();
+  }
+
+  function mostrarPaso2(){ $('paso2').classList.remove('oculto'); window.scrollTo(0,0); }
+
+  function render(){
+    $('datosHuesped').innerHTML =
+      '<b>' + esc(estado.nombre) + '</b><br>Habitación <b>' + esc(estado.habitacion) + '</b>' +
+      ' &middot; Plan de hospedaje: <b>' + esc(estado.planHospedaje || 'sin plan') + '</b>';
+
+    var c = $('contenido');
+
+    if(estado.forzadoSinAlimentacion){
+      c.innerHTML = '<div class="aviso aviso-warn">Su plan de hospedaje (<b>' + esc(estado.planHospedaje) +
+        '</b>) <b>no permite registrar alimentación</b>. Si necesita alimentarse en la sede, acérquese a recepción.</div>';
+      mostrarPaso2(); return;
+    }
+    if(estado.arranchado){
+      c.innerHTML = '<div class="aviso aviso-ok">&#9989; <b>Usted se encuentra arranchado.</b><br>' +
+        'Su plan actual es <b>' + esc(estado.planHospedaje) + '</b>.</div>' +
+        '<div class="aviso aviso-info">En caso de que desee <b>cambiar el plan o suspenderlo</b>, debe solicitarlo ' +
+        'con administración. Una vez verificada su solicitud se le dará la autorización y podrá seguir el proceso en recepción.</div>';
+      mostrarPaso2(); return;
+    }
+    if(estado.solicitudPendiente){
+      var s = estado.solicitudPendiente;
+      c.innerHTML = '<div class="aviso aviso-ok">&#9989; <b>Su solicitud ya fue registrada.</b><br>' +
+        'Plan solicitado: <b>' + esc(s.descripcion) + '</b>' + (s.valor ? ' &middot; ' + pesos(s.valor) : '') + '</div>' +
+        '<div class="aviso aviso-info">Está pendiente de aplicarse. Si desea modificarla, acérquese a recepción.</div>';
+      mostrarPaso2(); return;
+    }
+    if(estado.fueraDeHorario){
+      c.innerHTML = '<div class="aviso aviso-info">Usted actualmente <b>no se encuentra registrado</b> en el plan de alimentación.</div>' +
+        '<div class="aviso aviso-warn">&#128337; Ya pasó la hora límite (<b>' + estado.horaCorte + ':00</b>) para registrar el plan. ' +
+        'Puede hacerlo mañana antes de esa hora, o acercarse a recepción.</div>';
+      mostrarPaso2(); return;
+    }
+
+    var h = '<div class="aviso aviso-info">Usted actualmente <b>no se encuentra registrado</b> en el plan de alimentación.<br>' +
+            'Seleccione las comidas que desea:</div>';
+    ['desayuno','almuerzo','cena'].forEach(function(m){
+      var nom = m.charAt(0).toUpperCase() + m.slice(1);
+      h += '<div class="comida" onclick="toggle(\'' + m + '\')" id="box-' + m + '">' +
+           '<input type="checkbox" id="chk-' + m + '" onclick="event.stopPropagation(); toggle(\'' + m + '\', true)">' +
+           '<div class="txt"><div class="nom">' + nom + '</div></div></div>';
+    });
+    h += '<div class="resumen" id="resumen"><div class="plan">Seleccione al menos una comida</div></div>';
+    h += '<button class="btn" id="btnGuardar" onclick="guardar()" disabled>Registrar mi plan</button>';
+    h += '<div class="datos" style="margin-top:14px;"><b>Planes disponibles</b><table class="tabla-planes">';
+    estado.planes.forEach(function(p){ h += '<tr><td>' + esc(p.nombre) + '</td><td>' + pesos(p.precio) + '</td></tr>'; });
+    h += '</table><div style="font-size:11.5px; color:#6b7280; margin-top:8px;">Rige desde el <b>' +
+         esc(estado.vigenciaDesde) + '</b>.</div></div>';
+    c.innerHTML = h;
+    mostrarPaso2();
+  }
+
+  function toggle(comida, desdeCheckbox){
+    var chk = $('chk-' + comida);
+    if(!desdeCheckbox) chk.checked = !chk.checked;
+    $('box-' + comida).classList.toggle('sel', chk.checked);
+    actualizarResumen();
+  }
+
+  function seleccion(){
+    return { desayuno: $('chk-desayuno').checked, almuerzo: $('chk-almuerzo').checked, cena: $('chk-cena').checked };
+  }
+
+  function planDe(sel){
+    for(var i=0;i<estado.planes.length;i++){
+      var p = estado.planes[i];
+      if(!!p.desayuno === sel.desayuno && !!p.almuerzo === sel.almuerzo && !!p.cena === sel.cena) return p;
+    }
+    return null;
+  }
+
+  function actualizarResumen(){
+    var sel = seleccion(), res = $('resumen'), btn = $('btnGuardar');
+    if(!sel.desayuno && !sel.almuerzo && !sel.cena){
+      res.className = 'resumen';
+      res.innerHTML = '<div class="plan">Seleccione al menos una comida</div>';
+      btn.disabled = true; return;
+    }
+    var p = planDe(sel);
+    if(!p){
+      res.className = 'resumen malo';
+      res.innerHTML = '<div class="plan">Esa combinación no está disponible por el momento.<br>' +
+                      'Puede elegir: solo almuerzo, desayuno + almuerzo, o el arranche completo.</div>';
+      btn.disabled = true; return;
+    }
+    res.className = 'resumen';
+    res.innerHTML = '<div class="plan">' + esc(p.nombre) + '</div>' +
+                    '<div class="precio">' + pesos(p.precio) + '</div>' +
+                    '<div class="nota">Rige desde el ' + esc(estado.vigenciaDesde) + '</div>';
+    btn.disabled = false;
+  }
+
+  function guardar(){
+    var sel = seleccion(), p = planDe(sel);
+    if(!p) return;
+    if(!confirm('Confirmar plan: ' + p.nombre + '\nValor: ' + pesos(p.precio) +
+                '\nRige desde: ' + estado.vigenciaDesde + '\n\n¿Es correcto?')) return;
+
+    $('btnGuardar').disabled = true;
+    $('btnGuardar').textContent = 'Registrando...';
+
+    api({ api: 'registrar', cedula: $('cedula').value.trim(), hab: $('hab').value.trim().toUpperCase(),
+          d: sel.desayuno ? '1' : '0', a: sel.almuerzo ? '1' : '0', c: sel.cena ? '1' : '0' })
+      .then(function(r){
+        if(!r || !r.success){
+          $('btnGuardar').disabled = false;
+          $('btnGuardar').textContent = 'Registrar mi plan';
+          alert((r && r.error) || 'No se pudo registrar.');
+          return;
+        }
+        $('contenido').innerHTML =
+          '<div class="aviso aviso-ok" style="text-align:center;">&#9989; <b>¡Listo!</b><br>' +
+          'Su plan <b>' + esc(r.descripcion) + '</b> (' + pesos(r.valor) + ') quedó registrado.<br>' +
+          'Rige desde el <b>' + esc(r.vigenciaDesde) + '</b>.</div>' +
+          '<div class="aviso aviso-info">Recuerde: si necesita alimentación <b>hoy mismo</b>, pasará como extra. ' +
+          'Cualquier cambio debe solicitarlo con administración.</div>';
+        window.scrollTo(0,0);
+      })
+      .catch(function(e){
+        $('btnGuardar').disabled = false;
+        $('btnGuardar').textContent = 'Registrar mi plan';
+        alert('No hay conexión con el servidor. Intente de nuevo. (' + e.message + ')');
+      });
+  }
+</script>
+</body>
+</html>
