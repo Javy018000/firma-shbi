@@ -105,10 +105,23 @@
   function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
   function pesos(n){ return '$' + Number(n||0).toLocaleString('es-CO'); }
 
-  // Token de acceso: viaja en el QR (?t=...), NO está escrito en esta página.
+  // Token de acceso: llega en el QR (#t=... o ?t=...), NO está escrito en esta
+  // página. Apenas carga, se guarda en la sesión de la pestaña y se BORRA de la
+  // barra de direcciones: si alguien comparte el enlace copiándolo del
+  // navegador, viaja SIN token (para entrar hay que escanear el QR físico).
+  // El #fragmento además nunca sale del celular (ni a los logs del hosting).
   var TOKEN = (function(){
-    var m = window.location.search.match(/[?&]t=([^&]+)/);
-    return m ? decodeURIComponent(m[1]) : '';
+    var m = (window.location.search + window.location.hash).match(/[?&#]t=([^&#]+)/);
+    var t = m ? decodeURIComponent(m[1]) : '';
+    try {
+      if (t) {
+        sessionStorage.setItem('alimToken', t);   // sobrevive recargas en esta pestaña
+        history.replaceState(null, '', window.location.pathname); // limpiar la URL visible
+      } else {
+        t = sessionStorage.getItem('alimToken') || '';
+      }
+    } catch (e) { /* modo privado muy restrictivo: el token queda solo en memoria */ }
+    return t;
   })();
 
   // fetch sin cookies: Google no resuelve cuenta => sin error de multi-login
@@ -171,7 +184,7 @@
     }
     if(estado.arranchado){
       c.innerHTML = '<div class="aviso aviso-ok">&#9989; <b>Usted se encuentra arranchado.</b><br>' +
-        'Su plan actual es <b>' + esc(estado.planHospedaje) + '</b>.</div>' +
+        'Su plan de alimentación es <b>' + esc(estado.descripcionAlimentacion || estado.planAlimentacion) + '</b>.</div>' +
         '<div class="aviso aviso-info">En caso de que desee <b>cambiar el plan o suspenderlo</b>, debe solicitarlo ' +
         'con administración. Una vez verificada su solicitud se le dará la autorización y podrá seguir el proceso en recepción.</div>';
       mostrarPaso2(); return;
